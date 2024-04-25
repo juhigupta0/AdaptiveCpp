@@ -67,6 +67,7 @@
 #include "hipSYCL/glue/kernel_launcher_factory.hpp"
 #include "hipSYCL/glue/kernel_names.hpp"
 #include "hipSYCL/glue/generic/code_object.hpp"
+#include "hipSYCL/common/kernel_info.hpp"
 
 #ifndef HIPSYCL_ALLOW_INSTANT_SUBMISSION
 #define HIPSYCL_ALLOW_INSTANT_SUBMISSION 0
@@ -298,6 +299,12 @@ public:
     }
   }
 
+  template <typename KernelName = __hipsycl_unnamed_kernel, typename KernelType>
+  void enqueue_code_object_kernel(common::kernelinfo::KernelInfo info, KernelType kernelFunc)
+  {
+    this->submit_kernel<KernelName, rt::kernel_type::module_custom_single>(
+      sycl::id<1>{0}, sycl::range<1>{1}, sycl::range<1>{1}, kernelFunc, info);
+  }
 
   template <typename KernelName = __hipsycl_unnamed_kernel, typename KernelType>
   void single_task(KernelType kernelFunc)
@@ -305,7 +312,21 @@ public:
     this->submit_kernel<KernelName, rt::kernel_type::single_task>(
       sycl::id<1>{0}, sycl::range<1>{1}, sycl::range<1>{1}, kernelFunc);
   }
+template <typename KernelName = __hipsycl_unnamed_kernel,
+          typename... ReductionsAndKernel, int dimensions>
+  void enqueue_parallel_object_kernel(nd_range<dimensions> executionRange,
+                    common::kernelinfo::KernelInfo info,
+                    const ReductionsAndKernel &... redu_kernel) {
 
+    auto invoker = [&](auto&& kernel, auto&& ... reductions) {
+      this->submit_kernel<KernelName, rt::kernel_type::module_custom_parallel>(
+          executionRange.get_offset(), executionRange.get_global_range(),
+          executionRange.get_local_range(),
+          kernel, info, reductions...);
+    };
+
+    detail::separate_last_argument_and_apply(invoker, redu_kernel...);
+  }
   template <typename KernelName = __hipsycl_unnamed_kernel,
             typename... ReductionsAndKernel, int dimensions>
   void parallel_for(range<dimensions> numWorkItems,
@@ -793,6 +814,7 @@ private:
             int Dim, typename... Reductions>
   void submit_kernel(sycl::id<Dim> offset, sycl::range<Dim> global_range,
                      sycl::range<Dim> local_range, KernelFuncType f,
+                     const common::kernelinfo::KernelInfo& info = {"", ""},
                      Reductions... reductions) {
     std::size_t shared_mem_size = _local_mem_allocator.get_allocation_size();
 
@@ -803,6 +825,7 @@ private:
         typeid(KernelFuncType).name(),
         glue::make_kernel_launchers<KernelName, KernelType>(
             offset, local_range, global_range, shared_mem_size, f,
+            info,
             reductions...),
         _requirements);
 

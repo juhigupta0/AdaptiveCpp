@@ -83,7 +83,8 @@ public:
                                unsigned local_mem_size, void **args,
                                std::size_t *arg_sizes, std::size_t num_args,
                                const std::string &kernel_name,
-                               const glue::kernel_configuration& config) override;
+                               const glue::kernel_configuration& config,
+                               const common::kernelinfo::KernelInfo& info = {"", ""}) override;
 private:
   cuda_queue* _queue;
 };
@@ -130,7 +131,8 @@ public:
       const std::string &kernel_name, const rt::range<3> &num_groups,
       const rt::range<3> &group_size, unsigned local_mem_size, void **args,
       std::size_t *arg_sizes, std::size_t num_args,
-      const glue::kernel_configuration &config);
+      const glue::kernel_configuration &config,
+      const common::kernelinfo::KernelInfo& info = {"", ""});
 
   const host_timestamped_event& get_timing_reference() const {
     return _reference_event;

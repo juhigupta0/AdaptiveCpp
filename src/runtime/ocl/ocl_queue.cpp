@@ -409,7 +409,8 @@ result ocl_queue::submit_sscp_kernel_from_code_object(
     const std::string &kernel_name, const rt::range<3> &num_groups,
     const rt::range<3> &group_size, unsigned local_mem_size, void **args,
     std::size_t *arg_sizes, std::size_t num_args,
-    const glue::kernel_configuration &initial_config) {
+    const glue::kernel_configuration &initial_config,
+    const common::kernelinfo::KernelInfo& info) {
 
 
 #ifdef HIPSYCL_WITH_SSCP_COMPILER

@@ -46,9 +46,10 @@
 #include "hipSYCL/sycl/libkernel/sp_group.hpp"
 #include "hipSYCL/sycl/libkernel/group.hpp"
 #include "ir_constants.hpp"
+#include "hipSYCL/common/kernel_info.hpp"
 
 #include <array>
-
+#include <fstream>
 
 template <typename KernelType>
 // hipsycl_sscp_kernel causes kernel entries to be emitted to the HCF
@@ -248,10 +249,12 @@ public:
             typename... Reductions>
   void bind(sycl::id<Dim> offset, sycl::range<Dim> global_range,
             sycl::range<Dim> local_range, std::size_t dynamic_local_memory,
-            Kernel k, Reductions... reductions) {
+            Kernel k, 
+            const common::kernelinfo::KernelInfo& info = {"", ""},
+            Reductions... reductions) {
 
-    this->_type = type;
-    this->_invoker = [=] (rt::dag_node* node) mutable {
+      this->_type = type;
+      this->_invoker = [=] (rt::dag_node* node) mutable {
 
       static_cast<rt::kernel_operation *>(node->get_operation())
           ->initialize_embedded_pointers(k, reductions...);
@@ -311,6 +314,25 @@ public:
                                     _params};
 
         k(handle);
+      } else if constexpr (type == rt::kernel_type::module_custom_single) {
+
+        launch_kernel_with_global_range(__sscp_dispatch::single_task{k},
+                                        operation, sycl::range{1},
+                                        sycl::range{1}, dynamic_local_memory,
+                                        info);
+      } else if constexpr (type == rt::kernel_type::module_custom_parallel) {
+
+        if(offset == sycl::id<Dim>{}) {
+          launch_kernel_with_global_range(
+              __sscp_dispatch::ndrange_parallel_for<Kernel, Dim>{k}, operation,
+              global_range, local_range, dynamic_local_memory,
+              info);
+        } else {
+          launch_kernel_with_global_range(
+              __sscp_dispatch::ndrange_parallel_for_offset<Kernel, Dim>{k, offset},
+              operation, global_range, local_range, dynamic_local_memory,
+              info);
+        }
       }
       else {
         assert(false && "Unsupported kernel type");
@@ -354,7 +376,8 @@ private:
                                        rt::kernel_operation *op,
                                        const sycl::range<Dim> &global_range,
                                        const sycl::range<Dim> &group_size,
-                                       unsigned local_mem_size) {
+                                       unsigned local_mem_size,
+                                       const common::kernelinfo::KernelInfo& info = {"", ""}) {
 
     auto sscp_invoker = this->get_launch_capabilities().get_sscp_invoker();
     if(!sscp_invoker) {
@@ -376,16 +399,17 @@ private:
       num_groups[i] = (rt_global_range[i] + selected_group_size[i] - 1) /
                       selected_group_size[i];
     }
-    launch_kernel(k, op, num_groups, selected_group_size, local_mem_size);
+    launch_kernel(k, op, num_groups, selected_group_size, local_mem_size, info);
   }
 
   template <class Kernel, int Dim>
   void launch_kernel(const Kernel &k, rt::kernel_operation *op,
                      const sycl::range<Dim> &num_groups,
                      const sycl::range<Dim> &group_size,
-                     unsigned local_mem_size) {
+                     unsigned local_mem_size,
+                     const common::kernelinfo::KernelInfo& info = {"", ""}) {
     launch_kernel(k, op, flip_range(num_groups), flip_range(group_size),
-                  local_mem_size);
+                  local_mem_size, info);
   }
 
   template<class Kernel>
@@ -393,7 +417,8 @@ private:
     rt::kernel_operation* op,
     const rt::range<3>& num_groups,
     const rt::range<3>& group_size,
-    unsigned local_mem_size) {
+    unsigned local_mem_size,
+    const common::kernelinfo::KernelInfo& info = {"", ""}) {
     
     assert(op);
 
@@ -416,7 +441,7 @@ private:
     auto err = invoker->submit_kernel(
         *op, __hipsycl_local_sscp_hcf_object_id, num_groups, group_size,
         local_mem_size, const_cast<void **>(args.data()), &arg_size,
-        args.size(), kernel_name, *_configuration);
+        args.size(), kernel_name, *_configuration, info);
 
     if(!err.is_success()) {
       rt::register_error(err);

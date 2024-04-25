@@ -140,6 +140,7 @@ bool LLVMToPtxTranslator::toBackendFlavor(llvm::Module &M, PassHandler& PH) {
   M.setTargetTriple(Triple);
   M.setDataLayout(DataLayout);
 
+#if 0 //Need to figure out why this is affecting Thorin's IR translation. Error: Segmentation fault
   // Initialize libdevice parameters. These values are < 0 in case no explicit
   // setting has been done.
   if(FlushDenormalsToZero < 0)
@@ -152,7 +153,7 @@ bool LLVMToPtxTranslator::toBackendFlavor(llvm::Module &M, PassHandler& PH) {
   setFTZMode(M, FlushDenormalsToZero);
   setPrecDiv(M, PreciseDiv);
   setPrecSqrt(M, PreciseSqrt);
-
+#endif
   AddressSpaceMap ASMap = getAddressSpaceMap();
   
   KernelFunctionParameterRewriter ParamRewriter{

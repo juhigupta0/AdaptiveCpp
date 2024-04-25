@@ -52,6 +52,8 @@
 #include <llvm/Bitcode/BitcodeWriter.h>
 #include <string>
 
+#include "llvm/IR/Verifier.h"
+
 namespace hipsycl {
 namespace compiler {
 
@@ -148,6 +150,7 @@ bool LLVMToBackendTranslator::setBuildToolArguments(const std::string &ToolName,
 bool LLVMToBackendTranslator::partialTransformation(const std::string &LLVMIR, std::string &Out) {
   llvm::LLVMContext ctx;
   std::unique_ptr<llvm::Module> M;
+  ctx.setOpaquePointers(true);
   auto err = loadModuleFromString(LLVMIR, ctx, M);
 
   if (err) {
@@ -173,6 +176,7 @@ bool LLVMToBackendTranslator::partialTransformation(const std::string &LLVMIR, s
 bool LLVMToBackendTranslator::fullTransformation(const std::string &LLVMIR, std::string &out) {
   llvm::LLVMContext ctx;
   std::unique_ptr<llvm::Module> M;
+  ctx.setOpaquePointers(true);
   auto err = loadModuleFromString(LLVMIR, ctx, M);
 
   if (err) {
@@ -312,6 +316,10 @@ bool LLVMToBackendTranslator::optimizeFlavoredIR(llvm::Module& M, PassHandler& P
 
   llvm::ModulePassManager MPM =
       PH.PassBuilder->buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O3);
+
+  if (llvm::verifyModule(M, &llvm::errs())) {
+    llvm::errs() << "Error: The module is invalid.\n";
+  }
   MPM.run(M, *PH.ModuleAnalysisManager);
 
   return true;

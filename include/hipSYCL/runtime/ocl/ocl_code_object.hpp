@@ -56,7 +56,8 @@ public:
                                unsigned local_mem_size, void **args,
                                std::size_t *arg_sizes, std::size_t num_args,
                                const std::string &kernel_name,
-                               const glue::kernel_configuration& config) override;
+                               const glue::kernel_configuration& config,
+                               const common::kernelinfo::KernelInfo& info = {"", ""}) override;
 private:
   ocl_queue* _queue;
 };

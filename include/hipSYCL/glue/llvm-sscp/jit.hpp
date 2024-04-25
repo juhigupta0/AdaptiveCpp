@@ -43,10 +43,34 @@
 #include <fstream>
 #include <string>
 
+#include "hipSYCL/common/hcf_container.hpp"
+#include "hipSYCL/common/kernel_info.hpp"
+
 namespace hipsycl {
 namespace glue {
 namespace jit {
 
+inline bool readFile(const std::string& Filename, std::string& Out) {
+  std::ifstream File{Filename, std::ios::binary|std::ios::ate};
+  if(!File.is_open())
+    return false;
+
+  auto size = File.tellg();
+
+  if (size == 0) {
+      Out = std::string{};
+      return true;
+  }
+
+  std::string result(size, '\0');
+
+  File.seekg(0, std::ios::beg);
+  File.read(result.data(), size);
+
+  Out = result;
+
+  return true;
+}
 
 // Map arguments passed to a kernel function on the C++ level to
 // arguments of the kernel function. This is necessary because
@@ -55,24 +79,94 @@ namespace jit {
 class cxx_argument_mapper {
 public:
   cxx_argument_mapper(const rt::hcf_kernel_info &kernel_info, void **args,
-                      const std::size_t *arg_sizes, std::size_t num_args) {
-
-    std::size_t num_params = kernel_info.get_num_parameters();
+                      const std::size_t *arg_sizes, std::size_t num_args,
+                      const common::kernelinfo::KernelInfo& info = {"", ""}) {
     
-    for(int i = 0; i < num_params; ++i) {
-      std::size_t arg_size = kernel_info.get_argument_size(i);
-      std::size_t arg_offset = kernel_info.get_argument_offset(i);
-      std::size_t arg_original_index = kernel_info.get_original_argument_index(i);
+    if (!info.filename.empty() && !info.kernel_name.empty()) {
 
-      assert(arg_original_index < num_args);
+      // Extract the new/modified kernel from external
+      std::string InputFile = info.filename;
+      std::string HcfInput;
+      std::string source;
 
-      void *data_ptr = add_offset(args[arg_original_index], arg_offset);
-      
-      if(!data_ptr)
+        // Read the HCF file
+      if(!readFile(InputFile, HcfInput)) {
+        std::cout << "Could not open file: " << InputFile << std::endl;
+      }
+
+      // Initialize the HCF container and perform some checks on the device image node
+      common::hcf_container ext_hcf{HcfInput};
+      auto* KernelNode = ext_hcf.root_node()->get_subnode("kernels");
+      if(!KernelNode) {
+        std::cout << "Invalid ext_hcf: Could not find 'kernels' node" << std::endl;
         return;
+      }
 
-      _mapped_data.push_back(data_ptr);
-      _mapped_sizes.push_back(arg_size);
+      KernelNode = KernelNode->get_subnode(info.kernel_name);
+      if(!KernelNode) {
+        std::cout << "Invalid ext_hcf: Could not find specified kernel_name node" << std::endl;
+         return;
+      }
+
+      // investigate parameters
+      auto *parameters_node = KernelNode->get_subnode("parameters");
+      if (!parameters_node)
+          return;
+
+      std::size_t num_subnodes = parameters_node->get_subnodes().size();
+      
+      for(int i = 0; i < num_subnodes; ++i) {
+
+        const auto *param_info_node =
+          parameters_node->get_subnode(std::to_string(i));
+
+        if (!param_info_node)
+          return;
+
+        auto *byte_size = param_info_node->get_value("byte-size");
+        auto *byte_offset = param_info_node->get_value("byte-offset");
+        auto *original_index = param_info_node->get_value("original-index");
+
+        if (!byte_size)
+          return;
+        if (!byte_offset)
+          return;
+          
+        std::size_t arg_size = std::stoll(*byte_size);
+        std::size_t arg_offset = std::stoll(*byte_offset);
+        std::size_t arg_original_index = std::stoll(*original_index);
+
+        assert(arg_original_index < num_args);
+
+        void *data_ptr = add_offset(args[arg_original_index], arg_offset);
+        
+        if(!data_ptr)
+          return;
+
+        _mapped_data.push_back(data_ptr);
+        _mapped_sizes.push_back(arg_size);
+
+      }
+    } else {
+
+      std::size_t num_params = kernel_info.get_num_parameters();
+
+      for(int i = 0; i < num_params; ++i) {
+        std::size_t arg_size = kernel_info.get_argument_size(i);
+        std::size_t arg_offset = kernel_info.get_argument_offset(i);
+        std::size_t arg_original_index = kernel_info.get_original_argument_index(i);
+
+        assert(arg_original_index < num_args);
+
+        void *data_ptr = add_offset(args[arg_original_index], arg_offset);
+
+        if(!data_ptr)
+          return;
+
+        _mapped_data.push_back(data_ptr);
+        _mapped_sizes.push_back(arg_size);
+      }
+
     }
 
     _mapping_result = true;
@@ -250,7 +344,7 @@ inline rt::result compile(compiler::LLVMToBackendTranslator *translator,
   for(const auto& flag : config.build_flags()) {
     translator->setBuildFlag(glue::to_string(flag));
   }
-
+  
   // Transform code
   if(!translator->fullTransformation(source, output)) {
     // In case of failure, if a dump directory for IR is set,
@@ -282,12 +376,12 @@ inline rt::result compile(compiler::LLVMToBackendTranslator *translator,
   return rt::make_success();
 }
 
-
 inline rt::result compile(compiler::LLVMToBackendTranslator* translator,
                           const common::hcf_container* hcf,
                           const std::string& image_name,
                           const glue::kernel_configuration &config,
-                          std::string &output) {
+                          std::string &output,
+                          const common::kernelinfo::KernelInfo& info = {"", ""}) {
   assert(hcf);
   assert(hcf->root_node());
 
@@ -315,12 +409,65 @@ inline rt::result compile(compiler::LLVMToBackendTranslator* translator,
                        " was defined in HCF without data"});
   }
   std::string source;
-  if(!hcf->get_binary_attachment(target_image_node, source)) {
+  // If true, it's the module_custom_single or module_custom_parallel mode
+
+  if (!info.filename.empty() && !info.kernel_name.empty()) {
+    HIPSYCL_DEBUG_INFO << "jit::compile: In custom mode, extracting kernel "
+                            << info.kernel_name << " from "
+                            << info.filename << " HCF." << "\n";
+    // Extract the new/modified kernel from external
+    std::string InputFile = info.filename; //"add.hcf";
+    std::string HcfInput;
+
+    // Read the HCF file
+    if(!readFile(InputFile, HcfInput)) {
+      std::cout << "Could not open file: " << InputFile << std::endl;
+    }
+
+    // Initialize the HCF container and perform some checks on the device image node
+    common::hcf_container ext_hcf{HcfInput};
+    auto* ImgNode = ext_hcf.root_node()->get_subnode("images");
+    if(!ImgNode) {
+      // std::cout << "Invalid ext_hcf: Could not find 'images' node" << std::endl;
+      return rt::make_error(
+          __hipsycl_here(),
+          rt::error_info{
+              "jit::compile: Invalid ext_hcf: Could not find 'images' node"});
+    }
+
+    ImgNode = ImgNode->get_subnode(image_name);
+    if(!ImgNode) {
+      // std::cout << "Invalid ext_hcf: Could not find specified device image node" << std::endl;
+      return rt::make_error(
+          __hipsycl_here(),
+          rt::error_info{
+              "jit::compile: Could not find specified device image node"});
+    }
+
+    if(!ImgNode->has_binary_data_attached()){
+      std::cout << "Invalid ext_hcf: Specified node has no data attached to it." << std::endl;
+      return rt::make_error(
+          __hipsycl_here(),
+          rt::error_info{
+              "jit::compile: Specified node has no data attached to it"});
+    }
+
+    // Extract the binary content of Image node
+    if(!ext_hcf.get_binary_attachment(ImgNode, source)){
+      return rt::make_error(
+          __hipsycl_here(),
+          rt::error_info{
+              "jit::compile: Could not extract binary data for ext_hcf image " +
+              image_name});
+    }
+  } else {
+    if(!hcf->get_binary_attachment(target_image_node, source)) {
     return rt::make_error(
         __hipsycl_here(),
         rt::error_info{
             "jit::compile: Could not extract binary data for HCF image " +
             image_name});
+    }
   }
 
   symbol_list_t imported_symbol_names =
@@ -333,7 +480,9 @@ inline rt::result compile(compiler::LLVMToBackendTranslator* translator,
                           rt::hcf_object_id hcf_object,
                           const std::string& image_name,
                           const glue::kernel_configuration &config,
-                          std::string &output) {
+                          std::string &output,
+                          const common::kernelinfo::KernelInfo& info = {"", ""}) {
+
   const common::hcf_container* hcf = rt::hcf_cache::get().get_hcf(hcf_object);
   if(!hcf) {
     return rt::make_error(
@@ -342,7 +491,7 @@ inline rt::result compile(compiler::LLVMToBackendTranslator* translator,
   }
 
   return compile(translator, hcf, image_name, config,
-                 output);
+                 output, info);
 }
 
 }

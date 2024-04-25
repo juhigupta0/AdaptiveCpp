@@ -35,6 +35,8 @@
 #include "kernel_cache.hpp"
 #include "operations.hpp"
 
+#include "hipSYCL/common/kernel_info.hpp"
+
 namespace hipsycl {
 namespace rt {
 
@@ -60,7 +62,8 @@ public:
                                unsigned local_mem_size, void **args,
                                std::size_t *arg_sizes, std::size_t num_args,
                                const std::string &kernel_name,
-                               const glue::kernel_configuration& config) = 0;
+                               const glue::kernel_configuration& config,
+                               const common::kernelinfo::KernelInfo& info = {"", ""}) = 0;
 
   virtual rt::range<3> select_group_size(const rt::range<3> &global_range,
                                          const rt::range<3> &group_size) const {

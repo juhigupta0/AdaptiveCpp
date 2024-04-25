@@ -407,7 +407,8 @@ result omp_queue::submit_sscp_kernel_from_code_object(
     const std::string &kernel_name, const rt::range<3> &num_groups,
     const rt::range<3> &group_size, unsigned local_mem_size, void **args,
     std::size_t *arg_sizes, std::size_t num_args,
-    const glue::kernel_configuration &initial_config) {
+    const glue::kernel_configuration &initial_config,
+    const common::kernelinfo::KernelInfo& info) {
 #ifdef HIPSYCL_WITH_SSCP_COMPILER
 
   const hcf_kernel_info *kernel_info =
@@ -616,11 +617,12 @@ result omp_sscp_code_object_invoker::submit_kernel(
     const rt::range<3> &num_groups, const rt::range<3> &group_size,
     unsigned local_mem_size, void **args, std::size_t *arg_sizes,
     std::size_t num_args, const std::string &kernel_name,
-    const glue::kernel_configuration &config) {
+    const glue::kernel_configuration &config,
+    const common::kernelinfo::KernelInfo& info) {
 
   return _queue->submit_sscp_kernel_from_code_object(
       op, hcf_object, kernel_name, num_groups, group_size,
-      local_mem_size, args, arg_sizes, num_args, config);
+      local_mem_size, args, arg_sizes, num_args, config, info);
 }
 
 rt::range<3> omp_sscp_code_object_invoker::select_group_size(

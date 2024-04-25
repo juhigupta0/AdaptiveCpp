@@ -590,7 +590,9 @@ result hip_queue::submit_sscp_kernel_from_code_object(
       const std::string &kernel_name, const rt::range<3> &num_groups,
       const rt::range<3> &group_size, unsigned local_mem_size, void **args,
       std::size_t *arg_sizes, std::size_t num_args,
-      const glue::kernel_configuration &initial_config) {
+      const glue::kernel_configuration &initial_config,
+      const common::kernelinfo::KernelInfo& info) {
+
 #ifdef HIPSYCL_WITH_SSCP_COMPILER
   this->activate_device();
   
@@ -612,7 +614,7 @@ result hip_queue::submit_sscp_kernel_from_code_object(
 
 
   glue::jit::cxx_argument_mapper arg_mapper{*kernel_info, args, arg_sizes,
-                                            num_args};
+                                            num_args, info};
   if(!arg_mapper.mapping_available()) {
     return make_error(
         __hipsycl_here(),
@@ -660,13 +662,18 @@ result hip_queue::submit_sscp_kernel_from_code_object(
     std::vector<std::string> kernel_names;
     std::string selected_image_name = get_image_and_kernel_names(kernel_names);
 
+    if (!info.filename.empty() && !info.kernel_name.empty()) {
+      kernel_names.clear();
+      kernel_names.push_back(info.kernel_name);
+    }
+
     // Construct amdgpu translator to compile the specified kernels
     std::unique_ptr<compiler::LLVMToBackendTranslator> translator = 
       compiler::createLLVMToAmdgpuTranslator(kernel_names);
 
     // Lower kernels
     auto err = glue::jit::compile(translator.get(),
-        hcf, selected_image_name, config, compiled_image);
+        hcf, selected_image_name, config, compiled_image, info);
     
     if(!err.is_success()) {
       register_error(err);
@@ -679,6 +686,11 @@ result hip_queue::submit_sscp_kernel_from_code_object(
    
     std::vector<std::string> kernel_names;
     get_image_and_kernel_names(kernel_names);
+
+    if (!info.filename.empty() && !info.kernel_name.empty()) {
+      kernel_names.clear();
+      kernel_names.push_back(info.kernel_name);
+    }
     
     hip_sscp_executable_object *exec_obj = new hip_sscp_executable_object{
         amdgpu_image, target_arch_name, hcf_object,
@@ -712,11 +724,21 @@ result hip_queue::submit_sscp_kernel_from_code_object(
       static_cast<const hip_executable_object *>(obj)->get_module();
   assert(module);
 
-  return launch_kernel_from_module(
+  if (!info.filename.empty() && !info.kernel_name.empty()) {
+    return launch_kernel_from_module(
+      module, info.kernel_name, num_groups, group_size, local_mem_size, _stream,
+      arg_mapper.get_mapped_args(),
+      const_cast<std::size_t *>(arg_mapper.get_mapped_arg_sizes()),
+      arg_mapper.get_mapped_num_args());
+  } else {
+    return launch_kernel_from_module(
       module, kernel_name, num_groups, group_size, local_mem_size, _stream,
       arg_mapper.get_mapped_args(),
       const_cast<std::size_t *>(arg_mapper.get_mapped_arg_sizes()),
       arg_mapper.get_mapped_num_args());
+
+  }
+
 #else
   return make_error(
       __hipsycl_here(),
@@ -756,11 +778,12 @@ result hip_sscp_code_object_invoker::submit_kernel(
     const rt::range<3> &num_groups, const rt::range<3> &group_size,
     unsigned local_mem_size, void **args, std::size_t *arg_sizes,
     std::size_t num_args, const std::string &kernel_name,
-    const glue::kernel_configuration &config) {
+    const glue::kernel_configuration &config,
+    const common::kernelinfo::KernelInfo& info) {
 
   return _queue->submit_sscp_kernel_from_code_object(
       op, hcf_object, kernel_name, num_groups, group_size, local_mem_size, args,
-      arg_sizes, num_args, config);
+      arg_sizes, num_args, config, info);
 }
 
 }
